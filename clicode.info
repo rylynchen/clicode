@@ -1,0 +1,8 @@
+name = Clicode
+description = 基于Licode实现自定义多人视频
+package = Custom
+core = 7.x
+
+files[] = clicode.module
+
+configure = admin/config/media/clicode

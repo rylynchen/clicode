@@ -1,0 +1,178 @@
+<?php
+
+/**
+ * Implements hook_menu_alter().
+ */
+function clicode_menu() {
+	$items = array();
+	$items['admin/config/media/clicode'] = array(
+		'title' => 'Clicode',
+		'page callback' => 'drupal_get_form',
+		'page arguments' => array('clicode_settings'),
+		'access arguments' => array('administer clicode'),
+		'file' => 'clicode.admin.inc',
+	);
+	return $items;
+}
+
+/**
+ * Implements hook_permission().
+ */
+function clicode_permission() {
+	return array(
+		'administer clicode' => array(
+			'title' => t('Administer Clicode'),
+			'description' => t('Administer clicode'),
+		),
+	);
+}
+
+class Clicode {
+
+	const CREATE_ROLE = 'presenter';
+	public $url;
+	public $port;
+	public $roomId;
+	public $roomName;
+	public $token;
+	public $width;
+	public $height;
+	public $source;
+	public $rooms = array();
+
+	public function __construct($values = array()) {
+		$url = variable_get('clicode_server_url', '');
+		$port = variable_get('clicode_server_port', '');
+		$width = variable_get('clicode_iframe_width', '');
+		$height = variable_get('clicode_iframe_height', '');
+		if (!empty($url) && !empty($port) && !empty($width) && !empty($height)) {
+			$this->url = $url;
+			$this->port = $port;
+			$this->width = $width;
+			$this->height = $height;
+			$this->roomId = isset($values['roomId']) ? $values['roomId'] : NULL;
+			$this->roomName = isset($values['roomName']) ? $values['roomName'] : NULL;
+		} else {
+			watchdog('clicode', 'Clicode Construct fail, because of unconfigured.', array(), WATCHDOG_ERROR);
+			return FALSE; 
+		}
+	}
+
+	/**
+	 * Create room
+	 *
+	 * @param $roomName
+	 */
+	public function createRoom($roomName) {
+		$this->roomName = $roomName;
+	  $data = array('roomName' => $this->roomName);
+	  $options = array(
+	    'method' => 'POST',
+	    'data' => drupal_json_encode($data),
+	    'timeout' => 15,
+	    'headers' => array('Content-Type' => 'application/json'),
+	  );
+	  $result = drupal_http_request($this->url.':'.$this->port.'/createRoom/', $options);
+	  if ($result->code == 200) {
+	    $response = drupal_json_decode($result->data);
+	    if (isset($response['_id']) && !empty($response['_id'])) {
+	      $this->roomId = $response['_id'];
+	    }
+	  } else {
+	  	watchdog('clicode', 'Clicode create room fail, room name:'.$roomName, array(), WATCHDOG_ERROR);
+	  }
+		return $this;
+	}
+
+	/**
+	 * Get room id
+	 */
+	public function getRoomId() {
+		return $this->roomId;
+	}
+
+	/**
+	 * Get rooms.
+	 */
+	public function getRooms() {
+	  $options = array(
+	    'method' => 'GET',
+	    'timeout' => 15,
+	    'headers' => array('Content-Type' => 'application/json'),
+	  );
+	  $result = drupal_http_request($this->url.':'.$this->port.'/getRooms/', $options);
+	  if ($result->code == 200) {
+	  	$this->rooms = array();
+	  	foreach (drupal_json_decode($result->data) as $value) {
+	  		if (isset($value['_id']) && !empty($value['_id']) && isset($value['name']) && !empty($value['name'])) {
+		  		$this->rooms[$value['_id']] = $value['name'];
+	  		}
+	  	}
+	  } else {
+	  	watchdog('clicode', 'Clicode get rooms fail.', array(), WATCHDOG_ERROR);
+	  }
+		return $this;
+	}
+
+	/**
+	 * Get rooms.
+	 */
+	public function roomExist() {
+		return array_key_exists($this->roomId, $this->rooms);
+	}
+
+	/**
+	 * Get token.
+	 */
+	public function getToken() {
+		if (!empty($this->roomId)) {
+			global $user;
+		  $data = array('myRoom' => $this->roomId, 'username' => $user->uid, 'role' => self::CREATE_ROLE);
+		  $options = array(
+		    'method' => 'POST',
+		    'data' => drupal_json_encode($data),
+		    'timeout' => 15,
+		    'headers' => array('Content-Type' => 'application/json'),
+		  );
+		  $result = drupal_http_request($this->url.':'.$this->port.'/createToken/', $options);
+		  if ($result->code == 200) {
+		  	$json = drupal_json_decode($result->data);
+		  	if (isset($json['token'])) {
+			    $this->token = $json['token'];
+		  	} else {
+		  		watchdog('clicode', 'Clicode get token fail, roomId:'.$this->roomId.' not exist, now to create', array(), WATCHDOG_ERROR);
+		  	}
+		  } else {
+		  	watchdog('clicode', 'Clicode get token fail, roomId:'.$this->roomId.', uid:'.$user->uid, array(), WATCHDOG_ERROR);
+		  }
+		} else {
+			watchdog('clicode', 'Clicode get token fail, without room id', array(), WATCHDOG_ERROR);
+		}
+		return $this;
+	}
+
+	/**
+	 * Make iframe source.
+	 */
+	public function makeSource() {
+		if (!empty($this->token)) {
+			$this->source = $this->url.':'.$this->port.'?'.$this->token;
+		} else {
+			watchdog('clicode', 'Clicode make source fail, without make token', array(), WATCHDOG_ERROR);
+		}
+		return $this;
+	}
+
+	/**
+	 * Get iframe html.
+	 */
+	public function getIframe() {
+		if (!empty($this->source)) {
+			$output = '<iframe class="clicode_video" width="'.$this->width.'" height="'.$this->height.'" src="'.$this->source.'"></iframe>';
+			return $output;
+		} else {
+			watchdog('clicode', 'Clicode get iframe fail, without make source', array(), WATCHDOG_ERROR);
+			return '';
+		}
+	}
+}
